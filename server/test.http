@@ -1,0 +1,64 @@
+### Health Check
+GET http://localhost:4000/health
+
+### Register User
+POST http://localhost:4000/api/auth/register
+Content-Type: application/json
+
+{
+    "email": "test@example.com",
+    "password": "password123",
+    "name": "Test User"
+}
+
+### Login User
+POST http://localhost:4000/api/auth/login
+Content-Type: application/json
+
+{
+    "email": "test@example.com",
+    "password": "password123"
+}
+
+### Create Channel
+POST http://localhost:4000/api/channels
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN_HERE
+
+{
+    "name": "general",
+    "description": "General discussion channel",
+    "isPrivate": false
+}
+
+### Get All Channels
+GET http://localhost:4000/api/channels
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Send Message to Channel
+POST http://localhost:4000/api/messages/channel
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN_HERE
+
+{
+    "content": "Hello, world!",
+    "channelId": "CHANNEL_ID_HERE"
+}
+
+### Get Channel Messages
+GET http://localhost:4000/api/messages/channel/CHANNEL_ID_HERE
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Send Direct Message
+POST http://localhost:4000/api/messages/direct
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN_HERE
+
+{
+    "content": "Hey there!",
+    "receiverId": "RECEIVER_ID_HERE"
+}
+
+### Get Direct Messages
+GET http://localhost:4000/api/messages/direct/RECEIVER_ID_HERE
+Authorization: Bearer YOUR_TOKEN_HERE 

@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String
+  avatar        String?
+  status        String?   @default("active")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relationships
+  messages      Message[]
+  sentMessages  DirectMessage[] @relation("Sender")
+  receivedMessages DirectMessage[] @relation("Receiver")
+  channels      ChannelMember[]
+  createdChannels Channel[] @relation("Creator")
+}
+
+model Channel {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  isPrivate   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  creatorId   String
+
+  // Relationships
+  creator     User      @relation("Creator", fields: [creatorId], references: [id])
+  members     ChannelMember[]
+  messages    Message[]
+}
+
+model ChannelMember {
+  id        String    @id @default(cuid())
+  userId    String
+  channelId String
+  role      String    @default("member") // admin, member
+  joinedAt  DateTime  @default(now())
+
+  // Relationships
+  user      User      @relation(fields: [userId], references: [id])
+  channel   Channel   @relation(fields: [channelId], references: [id])
+
+  @@unique([userId, channelId])
+}
+
+model Message {
+  id        String    @id @default(cuid())
+  content   String
+  userId    String
+  channelId String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  parentId  String?   // For thread replies
+
+  // Relationships
+  user      User      @relation(fields: [userId], references: [id])
+  channel   Channel   @relation(fields: [channelId], references: [id])
+  parent    Message?  @relation("ThreadReplies", fields: [parentId], references: [id])
+  replies   Message[] @relation("ThreadReplies")
+}
+
+model DirectMessage {
+  id        String    @id @default(cuid())
+  content   String
+  senderId  String
+  receiverId String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relationships
+  sender    User      @relation("Sender", fields: [senderId], references: [id])
+  receiver  User      @relation("Receiver", fields: [receiverId], references: [id])
+} 

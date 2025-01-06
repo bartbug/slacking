@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        #messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .status {
+            color: #666;
+            font-style: italic;
+        }
+        .error {
+            color: red;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 5px;
+            background: #f0f0f0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="status"></div>
+    <div id="messages"></div>
+    <input type="text" id="messageInput" placeholder="Type a message...">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const messagesDiv = document.getElementById('messages');
+        
+        function addStatus(message, isError = false) {
+            const p = document.createElement('p');
+            p.textContent = message;
+            p.className = isError ? 'error' : 'status';
+            statusDiv.appendChild(p);
+            console.log(isError ? 'Error:' : 'Status:', message);
+        }
+
+        function addMessage(message) {
+            const p = document.createElement('p');
+            p.textContent = `${new Date().toLocaleTimeString()}: ${message.content}`;
+            p.className = 'message';
+            messagesDiv.appendChild(p);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        const socket = io('http://localhost:4000', {
+            withCredentials: true,
+            transports: ['websocket', 'polling']
+        });
+        
+        const channelId = 'cm5lkwfgq0002cuirtyfkqtu4';
+
+        socket.on('connect', () => {
+            addStatus('Connected to server');
+            socket.emit('join-channel', channelId);
+        });
+
+        socket.on('connect_error', (error) => {
+            addStatus('Connection error: ' + error.message, true);
+        });
+
+        socket.on('error', (error) => {
+            addStatus('Socket error: ' + error.message, true);
+        });
+
+        socket.on('disconnect', (reason) => {
+            addStatus('Disconnected: ' + reason);
+        });
+
+        socket.on('new-channel-message', (message) => {
+            addMessage(message);
+        });
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            if (!input.value.trim()) return;
+
+            const message = {
+                content: input.value,
+                channelId: channelId
+            };
+            
+            socket.emit('channel-message', message);
+            input.value = '';
+        }
+
+        // Allow sending message with Enter key
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html> 
