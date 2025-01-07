@@ -1,13 +1,16 @@
-import './globals.css'
+import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
-import ClientLayout from '../components/ClientLayout'
-import { Toaster } from '../components/ui/toaster'
+import './globals.css'
+import { Toaster } from '@/components/ui/toaster'
+import { AuthProvider } from '@/lib/auth'
+import { SocketProvider } from '@/lib/socket'
+import { AppLayout } from '@/components/AppLayout'
 
 const inter = Inter({ subsets: ['latin'] })
 
-export const metadata = {
+export const metadata: Metadata = {
   title: 'Slack Clone',
-  description: 'A modern messaging platform for teams',
+  description: 'A real-time chat application',
 }
 
 export default function RootLayout({
@@ -16,12 +19,15 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
-        <ClientLayout>
-          {children}
-        </ClientLayout>
-        <Toaster />
+    <html lang="en" className="h-full">
+      <body className={`${inter.className} h-full antialiased`}>
+        <AuthProvider>
+          <SocketProvider>
+            <AppLayout>
+              {children}
+            </AppLayout>
+          </SocketProvider>
+        </AuthProvider>
       </body>
     </html>
   )

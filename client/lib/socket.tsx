@@ -12,6 +12,8 @@ interface SocketContextType {
   joinDirectMessage: (userId: string) => void;
   sendChannelMessage: (content: string, channelId: string, userId: string) => void;
   sendDirectMessage: (content: string, senderId: string, receiverId: string) => void;
+  addReaction: (messageId: string, emoji: string, userId: string) => void;
+  removeReaction: (messageId: string, emoji: string, userId: string) => void;
 }
 
 const SocketContext = createContext<SocketContextType>({
@@ -22,6 +24,8 @@ const SocketContext = createContext<SocketContextType>({
   joinDirectMessage: () => {},
   sendChannelMessage: () => {},
   sendDirectMessage: () => {},
+  addReaction: () => {},
+  removeReaction: () => {},
 });
 
 export const useSocket = () => useContext(SocketContext);
@@ -90,6 +94,18 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     }
   };
 
+  const addReaction = (messageId: string, emoji: string, userId: string) => {
+    if (socket) {
+      socket.emit('add-reaction', { messageId, emoji, userId });
+    }
+  };
+
+  const removeReaction = (messageId: string, emoji: string, userId: string) => {
+    if (socket) {
+      socket.emit('remove-reaction', { messageId, emoji, userId });
+    }
+  };
+
   return (
     <SocketContext.Provider
       value={{
@@ -100,6 +116,8 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
         joinDirectMessage,
         sendChannelMessage,
         sendDirectMessage,
+        addReaction,
+        removeReaction,
       }}
     >
       {children}
@@ -120,27 +138,61 @@ export const useChannelMessages = (channelId: string) => {
 
     // Handle initial messages
     socket.on('channel-messages', (initialMessages: Message[]) => {
-      setMessages(initialMessages);
+      const messagesWithReactions = initialMessages.map(msg => ({
+        ...msg,
+        reactions: msg.reactions || []
+      }));
+      setMessages(sortMessagesByDate(messagesWithReactions));
     });
 
     // Listen for new messages
     const handleNewMessage = (message: Message) => {
       if (message.channelId === channelId) {
-        setMessages(prev => [...prev, message]);
+        const messageWithReactions = {
+          ...message,
+          reactions: message.reactions || []
+        };
+        setMessages(prev => sortMessagesByDate([...prev, messageWithReactions]));
+      }
+    };
+
+    // Listen for reaction updates
+    const handleReactionUpdate = (updatedMessage: Message) => {
+      if (updatedMessage.channelId === channelId) {
+        const messageWithReactions = {
+          ...updatedMessage,
+          reactions: updatedMessage.reactions || []
+        };
+        setMessages(prev => 
+          sortMessagesByDate(
+            prev.map(msg => 
+              msg.id === updatedMessage.id ? messageWithReactions : msg
+            )
+          )
+        );
       }
     };
 
     socket.on('new-channel-message', handleNewMessage);
+    socket.on('reaction-updated', handleReactionUpdate);
 
     // Cleanup
     return () => {
       socket.off('channel-messages');
       socket.off('new-channel-message', handleNewMessage);
+      socket.off('reaction-updated', handleReactionUpdate);
       socket.emit('leave-channel', channelId);
     };
   }, [socket, channelId]);
 
   return messages;
+};
+
+// Helper function to sort messages by date
+const sortMessagesByDate = (messages: Message[]): Message[] => {
+  return [...messages].sort((a, b) => 
+    new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
 };
 
 export const useDirectMessages = (otherUserId: string) => {

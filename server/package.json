@@ -10,7 +10,7 @@
     "test": "jest",
     "lint": "eslint . --ext .ts",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate deploy"
   },
   "dependencies": {
     "@prisma/client": "^5.7.0",

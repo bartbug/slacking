@@ -5,11 +5,7 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { useAuth } from '@/lib/auth'
 
-interface AuthProps {
-  onLogin: (username: string) => void;
-}
-
-export function Auth({ onLogin }: AuthProps) {
+export function Auth() {
   const { login, register } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [isRegister, setIsRegister] = useState(false)
@@ -29,8 +25,7 @@ export function Auth({ onLogin }: AuthProps) {
     e.preventDefault()
     setIsLoading(true)
     try {
-      const user = await login(loginData.email, loginData.password)
-      onLogin(user.name)
+      await login(loginData.email, loginData.password)
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to login')
     } finally {
@@ -42,8 +37,7 @@ export function Auth({ onLogin }: AuthProps) {
     e.preventDefault()
     setIsLoading(true)
     try {
-      const user = await register(registerData.email, registerData.password, registerData.name)
-      onLogin(user.name)
+      await register(registerData.email, registerData.password, registerData.name)
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to register')
     } finally {
