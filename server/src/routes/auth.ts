@@ -3,6 +3,15 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import { authenticateToken } from '../middleware/auth';
+import { Request } from 'express';
+
+interface AuthRequest extends Request {
+  user?: {
+    id: string;
+    email: string;
+  };
+}
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -105,6 +114,32 @@ router.post('/login', async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
     }
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Validate token route
+router.get('/validate', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        email: true,
+        name: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({ user });
+  } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
