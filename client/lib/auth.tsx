@@ -40,7 +40,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Check for existing token and validate it
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const token = sessionStorage.getItem('token');
     if (token) {
       fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/validate`, {
         headers: {
@@ -55,7 +55,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setUser(data.user);
         })
         .catch(() => {
-          localStorage.removeItem('token');
+          sessionStorage.removeItem('token');
         })
         .finally(() => {
           setIsLoading(false);
@@ -80,7 +80,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     const data = await res.json();
-    localStorage.setItem('token', data.token);
+    sessionStorage.setItem('token', data.token);
     setUser(data.user);
     return data.user;
   };
@@ -100,13 +100,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     const data = await res.json();
-    localStorage.setItem('token', data.token);
+    sessionStorage.setItem('token', data.token);
     setUser(data.user);
     return data.user;
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
+    sessionStorage.removeItem('token');
     setUser(null);
   };
 

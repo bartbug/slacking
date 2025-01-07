@@ -16,6 +16,17 @@ interface AuthRequest extends Request {
 const router = Router();
 const prisma = new PrismaClient();
 
+// Add JWT expiration if not in env
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+
+// Validate required env vars early
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be defined in environment');
+}
+
+// Assert JWT_SECRET type after validation
+const JWT_SECRET: string = process.env.JWT_SECRET;
+
 // Validation schemas
 const registerSchema = z.object({
   email: z.string().email(),
@@ -62,8 +73,8 @@ router.post('/register', async (req, res) => {
     // Generate token
     const token = jwt.sign(
       { id: user.id, email: user.email },
-      process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
     );
 
     res.json({ user, token });
@@ -98,8 +109,8 @@ router.post('/login', async (req, res) => {
     // Generate token
     const token = jwt.sign(
       { id: user.id, email: user.email },
-      process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
     );
 
     res.json({
