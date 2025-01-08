@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Channel } from '../types';
 import { useAuth } from '../auth';
+import { TokenService } from '../services/token';
 
 export function useChannels() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -13,7 +14,11 @@ export function useChannels() {
 
     const fetchChannels = async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = TokenService.get();
+        if (!token) {
+          throw new Error('No authentication token found');
+        }
+
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/channels`, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -39,7 +44,11 @@ export function useChannels() {
 
   const createChannel = async (name: string, description?: string, isPrivate: boolean = false) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = TokenService.get();
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/channels`, {
         method: 'POST',
         headers: {
@@ -50,7 +59,8 @@ export function useChannels() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create channel');
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create channel');
       }
 
       const newChannel = await response.json();

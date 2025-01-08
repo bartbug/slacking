@@ -29,14 +29,21 @@ const addMemberSchema = z.object({
 // Create channel
 router.post('/', authenticateToken, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    console.log('Creating channel with data:', req.body);
     const { name, description, isPrivate } = createChannelSchema.parse(req.body);
-    const userId = req.user!.id;
+    const userId = req.user.id;
+
+    console.log('Validated channel data:', { name, description, isPrivate, userId });
 
     const channel = await prisma.channel.create({
       data: {
         name,
         description,
-        isPrivate,
+        isPrivate: isPrivate || false,
         creatorId: userId,
         members: {
           create: {
@@ -60,12 +67,22 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       }
     });
 
+    console.log('Channel created successfully:', channel);
     res.json(channel);
   } catch (error) {
+    console.error('Error creating channel:', error);
+    
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: error.errors });
+      const errorMessages = error.errors.map(err => err.message).join(', ');
+      return res.status(400).json({ error: errorMessages });
     }
-    res.status(500).json({ error: 'Internal server error' });
+
+    // Check for Prisma unique constraint violations
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002') {
+      return res.status(400).json({ error: 'A channel with this name already exists' });
+    }
+
+    res.status(500).json({ error: 'Failed to create channel. Please try again.' });
   }
 });
 

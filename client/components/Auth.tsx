@@ -47,7 +47,7 @@ export function Auth() {
 
   return (
     <div className="w-[350px] p-6 bg-white rounded-lg shadow-lg">
-      <h2 className="text-2xl font-bold mb-4">Welcome to Slack Clone</h2>
+      <h2 className="text-2xl font-bold mb-4">Time to Start Slacking</h2>
       <p className="text-gray-600 mb-6">Login or create an account to get started</p>
       
       <div className="flex gap-2 mb-6">

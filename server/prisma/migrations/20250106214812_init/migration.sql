@@ -45,6 +45,7 @@ CREATE TABLE "Message" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "parentId" TEXT,
+    "replyCount" INTEGER NOT NULL DEFAULT 0,
 
     CONSTRAINT "Message_pkey" PRIMARY KEY ("id")
 );

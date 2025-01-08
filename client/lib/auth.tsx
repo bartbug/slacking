@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { TokenService } from './services/token';
 
 interface User {
   id: string;
@@ -30,47 +31,52 @@ const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
-interface AuthProviderProps {
-  children: React.ReactNode;
-}
-
-export function AuthProvider({ children }: AuthProviderProps) {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Check for existing token and validate it
+  // Handle token expiration
   useEffect(() => {
-    const token = sessionStorage.getItem('token');
-    if (token) {
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/validate`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-        .then((res) => {
-          if (res.ok) return res.json();
-          throw new Error('Invalid token');
-        })
-        .then((data) => {
-          setUser(data.user);
-        })
-        .catch(() => {
-          sessionStorage.removeItem('token');
-        })
-        .finally(() => {
-          setIsLoading(false);
+    const handleTokenExpired = () => {
+      setUser(null);
+    };
+    window.addEventListener('token-expired', handleTokenExpired);
+    return () => window.removeEventListener('token-expired', handleTokenExpired);
+  }, []);
+
+  // Validate token on mount
+  useEffect(() => {
+    const validateToken = async () => {
+      const token = TokenService.get();
+      if (!token || !TokenService.isValid(token)) {
+        TokenService.remove();
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/validate`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
-    } else {
-      setIsLoading(false);
-    }
+        
+        if (!res.ok) throw new Error('Invalid token');
+        
+        const data = await res.json();
+        setUser(data.user);
+      } catch {
+        TokenService.remove();
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    validateToken();
   }, []);
 
   const login = async (email: string, password: string): Promise<User> => {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
 
@@ -80,7 +86,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     const data = await res.json();
-    sessionStorage.setItem('token', data.token);
+    TokenService.set(data.token);
     setUser(data.user);
     return data.user;
   };
@@ -88,9 +94,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const register = async (email: string, password: string, name: string): Promise<User> => {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/register`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, name }),
     });
 
@@ -100,13 +104,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     const data = await res.json();
-    sessionStorage.setItem('token', data.token);
+    TokenService.set(data.token);
     setUser(data.user);
     return data.user;
   };
 
   const logout = () => {
-    sessionStorage.removeItem('token');
+    TokenService.remove();
     setUser(null);
   };
 

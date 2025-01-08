@@ -15,24 +15,23 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
         <Auth />
-        <Toaster />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+    <div className="h-screen flex overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100">
       <Sidebar />
-      <div className="flex-grow flex flex-col bg-white shadow-xl">
+      <main className="flex-1 flex flex-col overflow-hidden">
         <header className="h-12 border-b flex items-center px-4 justify-between">
           <div className="flex items-center gap-2">
             <ProfileMenu />
           </div>
         </header>
         {children}
-      </div>
+      </main>
       <Toaster />
     </div>
   );

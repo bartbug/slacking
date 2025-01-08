@@ -23,6 +23,9 @@ export interface Message {
   user: User;
   createdAt: string;
   reactions: MessageReaction[];
+  parentMessageId?: string;
+  replyCount?: number;
+  lastReplyAt?: string;
 }
 
 export interface DirectMessage {
@@ -31,4 +34,13 @@ export interface DirectMessage {
   senderId: string;
   receiverId: string;
   createdAt: string;
+}
+
+export interface Thread {
+  id: string;
+  channelId: string;
+  parentMessage: Message;
+  participantIds: string[];
+  messageCount: number;
+  lastActivityAt: string;
 } 

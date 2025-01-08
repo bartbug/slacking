@@ -4,11 +4,13 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+import rateLimit from 'express-rate-limit';
 
 // Import routes
 import authRoutes from './routes/auth';
 import channelRoutes from './routes/channels';
 import messageRoutes from './routes/messages';
+import threadRoutes from './routes/threads';
 
 // Load environment variables
 dotenv.config();
@@ -38,10 +40,18 @@ app.use(cors({
 }));
 app.use(express.json());
 
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
+app.use('/api/auth', limiter);
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/threads', threadRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -74,7 +84,7 @@ io.on('connection', (socket) => {
           }
         },
         orderBy: {
-          createdAt: 'desc'
+          createdAt: 'asc'
         },
         take: 50 // Limit to last 50 messages
       });
@@ -157,6 +167,146 @@ io.on('connection', (socket) => {
     } catch (error) {
       console.error('Error saving direct message:', error);
       socket.emit('error', { message: 'Failed to save direct message' });
+    }
+  });
+
+  // Join a thread room
+  socket.on('thread:join', async (threadId: string) => {
+    console.log(`Socket ${socket.id} joining thread ${threadId}`);
+    socket.join(`thread:${threadId}`);
+
+    try {
+      const thread = await prisma.message.findUnique({
+        where: { id: threadId },
+        include: {
+          replies: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true
+                }
+              }
+            },
+            orderBy: {
+              createdAt: 'asc'
+            }
+          }
+        }
+      });
+
+      if (thread) {
+        socket.emit('thread:messages', thread.replies);
+      }
+    } catch (error) {
+      console.error('Error fetching thread messages:', error);
+      socket.emit('error', { message: 'Failed to fetch thread messages' });
+    }
+  });
+
+  // Leave a thread room
+  socket.on('thread:leave', (threadId: string) => {
+    console.log(`Socket ${socket.id} leaving thread ${threadId}`);
+    socket.leave(`thread:${threadId}`);
+  });
+
+  // Handle new thread message
+  socket.on('thread:message', async (message: { 
+    content: string; 
+    channelId: string; 
+    parentMessageId: string;
+    userId: string;
+  }) => {
+    try {
+      console.log('Received thread message:', message);
+
+      // Verify parent message exists
+      const parentMessage = await prisma.message.findUnique({
+        where: { id: message.parentMessageId },
+        select: { id: true, channelId: true }
+      });
+
+      if (!parentMessage) {
+        console.error('Parent message not found:', message.parentMessageId);
+        socket.emit('error', { message: 'Parent message not found' });
+        return;
+      }
+
+      if (parentMessage.channelId !== message.channelId) {
+        console.error('Channel ID mismatch:', {
+          messageChannelId: message.channelId,
+          parentChannelId: parentMessage.channelId
+        });
+        socket.emit('error', { message: 'Invalid channel ID' });
+        return;
+      }
+
+      // Create the reply and update parent in a transaction
+      const [reply] = await prisma.$transaction(async (tx) => {
+        console.log('Creating reply message...');
+        // Create the reply
+        const newReply = await tx.message.create({
+          data: {
+            content: message.content,
+            channelId: message.channelId,
+            userId: message.userId,
+            parentId: message.parentMessageId,
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            }
+          }
+        });
+        console.log('Reply created:', newReply);
+
+        console.log('Updating parent message...');
+        // Update parent message with raw SQL
+        await tx.$executeRawUnsafe(`
+          UPDATE "Message"
+          SET "lastReplyAt" = NOW(),
+              "replyCount" = COALESCE("replyCount", 0) + 1,
+              "updatedAt" = NOW()
+          WHERE id = '${message.parentMessageId}'
+        `);
+        console.log('Parent message updated');
+
+        return [newReply];
+      });
+
+      console.log('Thread reply saved:', reply);
+      
+      // Emit to thread room
+      console.log('Emitting to thread room:', `thread:${message.parentMessageId}`);
+      io.to(`thread:${message.parentMessageId}`).emit('thread:message', reply);
+      
+      // Also emit an update to the channel for the thread preview
+      console.log('Emitting thread update to channel:', `channel:${message.channelId}`);
+      io.to(`channel:${message.channelId}`).emit('thread:updated', {
+        threadId: message.parentMessageId,
+        messageId: reply.id,
+        content: reply.content,
+        user: reply.user
+      });
+    } catch (error) {
+      console.error('Error saving thread message:', {
+        error,
+        message,
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+        socketId: socket.id,
+        errorType: error instanceof Error ? error.constructor.name : typeof error
+      });
+      socket.emit('error', { 
+        message: 'Failed to save thread message',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        errorCode: error instanceof Error && 'code' in error ? (error as any).code : undefined
+      });
     }
   });
 

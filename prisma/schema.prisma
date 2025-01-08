@@ -62,12 +62,16 @@ model Message {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   parentId  String?   // For thread replies
+  replyCount Int      @default(0)  // Count of replies in thread
+  lastReplyAt DateTime? // Timestamp of last reply
 
   // Relationships
   user      User      @relation(fields: [userId], references: [id])
   channel   Channel   @relation(fields: [channelId], references: [id])
   parent    Message?  @relation("ThreadReplies", fields: [parentId], references: [id])
   replies   Message[] @relation("ThreadReplies")
+
+  @@index([parentId])  // Index for faster thread queries
 }
 
 model DirectMessage {

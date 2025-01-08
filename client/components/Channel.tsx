@@ -2,23 +2,43 @@
 
 import React, { useState, useLayoutEffect, useEffect } from 'react';
 import { useSocket, useChannelMessages } from '../lib/socket';
-import { Message, Channel as ChannelType, MessageReaction } from '../lib/types';
+import { Message, Channel as ChannelType, MessageReaction, Thread } from '../lib/types';
 import { useAuth } from '@/lib/auth';
 import { ReactionPicker } from './ReactionPicker';
 import { Button } from './ui/button';
+import { useChannelStore } from '@/lib/stores/channelStore';
+import { useUserStore } from '@/lib/stores/userStore';
+import { useThreadStore } from '@/lib/stores/threadStore';
+import { ThreadPanel } from './ThreadPanel';
 
 interface ChannelProps {
   channelId: string;
   userId: string;
 }
 
-export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
-  const [newMessage, setNewMessage] = useState('');
-  const [channel, setChannel] = useState<ChannelType | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const { sendChannelMessage, isConnected, socket, addReaction, removeReaction } = useSocket();
-  const messages = useChannelMessages(channelId);
+export function Channel({ channelId, userId }: ChannelProps) {
   const { user } = useAuth();
+  const { 
+    messages, 
+    currentChannel,
+    isLoading,
+    error,
+    setMessages,
+    addMessage,
+    setCurrentChannel,
+    setError,
+    setLoading 
+  } = useChannelStore();
+  
+  const { 
+    userTyping,
+    setUserTyping,
+    clearUserTyping 
+  } = useUserStore();
+
+  const [newMessage, setNewMessage] = useState('');
+  const { socket, isConnected, sendChannelMessage, addReaction, removeReaction } = useSocket();
+  const { setActiveThread } = useThreadStore();
 
   useEffect(() => {
     if (!socket || !user) return;
@@ -31,10 +51,10 @@ export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
   }, [socket, user]);
 
   useLayoutEffect(() => {
-    setIsLoading(true);
+    setLoading(true);
     const fetchChannel = async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = sessionStorage.getItem('token');
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/channels/${channelId}`, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -46,11 +66,12 @@ export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
         }
 
         const data = await response.json();
-        setChannel(data);
+        setCurrentChannel(data);
       } catch (error) {
         console.error('Error fetching channel:', error);
+        setError(error instanceof Error ? error.message : 'Failed to fetch channel');
       } finally {
-        setIsLoading(false);
+        setLoading(false);
       }
     };
 
@@ -59,10 +80,39 @@ export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
     }
 
     return () => {
-      // Clean up by keeping the previous channel data during transition
-      setIsLoading(true);
+      setLoading(true);
     };
-  }, [channelId]);
+  }, [channelId, setLoading, setCurrentChannel, setError]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.emit('join-channel', channelId);
+
+    socket.on('channel-messages', (initialMessages: Message[]) => {
+      setMessages(initialMessages.map(msg => ({
+        ...msg,
+        reactions: msg.reactions || []
+      })));
+    });
+
+    const handleNewMessage = (message: Message) => {
+      if (message.channelId === channelId) {
+        addMessage({
+          ...message,
+          reactions: message.reactions || []
+        });
+      }
+    };
+
+    socket.on('new-channel-message', handleNewMessage);
+
+    return () => {
+      socket.off('channel-messages');
+      socket.off('new-channel-message', handleNewMessage);
+      socket.emit('leave-channel', channelId);
+    };
+  }, [socket, channelId, setMessages, addMessage]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,27 +138,39 @@ export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
     return user ? reaction.users.some(u => u.id === user.id) : false;
   };
 
-  if (isLoading || !channel) {
+  const handleThreadClick = async (message: Message) => {
+    const thread: Thread = {
+      id: message.id,
+      channelId,
+      parentMessage: message,
+      participantIds: [message.user.id],
+      messageCount: message.replyCount || 0,
+      lastActivityAt: message.lastReplyAt || message.createdAt
+    };
+    setActiveThread(thread);
+  };
+
+  if (isLoading || !currentChannel) {
     return (
-      <div className="flex flex-col h-full opacity-80">
-        <div className="px-6 py-4 border-b bg-white/50 backdrop-blur-sm">
+      <div className="h-full flex flex-col">
+        <div className="px-6 py-4 border-b bg-white/50 backdrop-blur-sm flex-shrink-0">
           <div className="h-6 w-48 bg-gray-200 rounded animate-pulse mb-2"></div>
           <div className="h-4 w-96 bg-gray-200 rounded animate-pulse"></div>
         </div>
-        <div className="flex-1"></div>
+        <div className="flex-1 min-h-0"></div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full opacity-100 transition-all duration-200 ease-in-out">
-      <div className="px-6 py-4 border-b bg-white/50 backdrop-blur-sm">
+    <div className="h-full flex flex-col">
+      <div className="px-6 py-4 border-b bg-white/50 backdrop-blur-sm flex-shrink-0">
         <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
           <span className="text-gray-400">#</span>
-          {channel.name}
+          {currentChannel.name}
         </h2>
-        {channel.description && (
-          <p className="text-sm text-gray-500 mt-1.5">{channel.description}</p>
+        {currentChannel.description && (
+          <p className="text-sm text-gray-500 mt-1.5">{currentChannel.description}</p>
         )}
         <div className="text-xs mt-2 flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
@@ -116,7 +178,7 @@ export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto min-h-0 p-6 space-y-6 pb-4">
         {messages.map((message: Message) => (
           <div 
             key={message.id} 
@@ -158,19 +220,32 @@ export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
                 <ReactionPicker 
                   onSelect={(emoji) => handleAddReaction(message.id, emoji)} 
                 />
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleThreadClick(message)}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  {message.replyCount ? (
+                    <span>{message.replyCount} replies</span>
+                  ) : (
+                    <span>Reply in thread</span>
+                  )}
+                </Button>
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      <form onSubmit={handleSendMessage} className="px-6 py-4 border-t bg-white/50 backdrop-blur-sm">
+      <form onSubmit={handleSendMessage} className="sticky bottom-0 px-6 py-4 border-t bg-white/50 backdrop-blur-sm">
         <div className="flex space-x-3">
           <input
             type="text"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            placeholder={`Message #${channel.name}`}
+            placeholder={`Message #${currentChannel?.name}`}
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
           />
           <button
@@ -182,6 +257,8 @@ export const Channel: React.FC<ChannelProps> = ({ channelId, userId }) => {
           </button>
         </div>
       </form>
+
+      <ThreadPanel />
     </div>
   );
-}; 
+} 
