@@ -12,6 +12,7 @@ import { useUserStore } from '@/lib/stores/userStore';
 import { useThreadStore } from '@/lib/stores/threadStore';
 import { ThreadPanel } from './ThreadPanel';
 import { PresenceIndicator } from './PresenceIndicator';
+import Cookies from 'js-cookie';
 
 interface ChannelProps {
   channelId: string;
@@ -52,7 +53,7 @@ export function Channel({ channelId, userId }: ChannelProps) {
   useEffect(() => {
     if (!socket || !user) return;
 
-    const token = localStorage.getItem('token');
+    const token = Cookies.get('token');
     if (token) {
       socket.auth = { token };
       socket.connect();

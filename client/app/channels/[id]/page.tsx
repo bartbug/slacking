@@ -1,21 +1,16 @@
-'use client';
+import { Suspense } from 'react';
+import { ChannelPageClient } from './ChannelPageClient';
 
-import { Channel } from '@/components/Channel';
-import { useAuth } from '@/lib/auth';
+interface PageProps {
+  params: Promise<{ id: string }>
+}
 
-export default function ChannelPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const { user } = useAuth();
-
-  if (!user) return null;
-
+export default async function ChannelPage({ params }: PageProps) {
+  const { id } = await params;
+  
   return (
-    <Channel 
-      channelId={params.id}
-      userId={user.id}
-    />
+    <Suspense fallback={<div>Loading...</div>}>
+      <ChannelPageClient channelId={id} />
+    </Suspense>
   );
 } 

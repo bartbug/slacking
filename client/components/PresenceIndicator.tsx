@@ -9,6 +9,15 @@ interface PresenceIndicatorProps {
 }
 
 export function PresenceIndicator({ user, showText = false, className }: PresenceIndicatorProps) {
+  // Add debug log when component renders
+  React.useEffect(() => {
+    console.log('PresenceIndicator rendered for user:', {
+      userId: user.id,
+      status: user.status,
+      lastSeen: user.lastSeen
+    });
+  }, [user.id, user.status, user.lastSeen]);
+
   const getStatusColor = (status?: string) => {
     switch (status) {
       case 'online':

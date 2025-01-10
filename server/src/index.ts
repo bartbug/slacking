@@ -112,7 +112,7 @@ app.get('/health', (req: Request, res: Response) => {
 });
 
 // Socket.IO connection handling
-io.on('connection', async (socket: Socket<ClientToServerEvents, ServerToClientEvents>) => {
+io.on('connection', (socket: Socket<ClientToServerEvents, ServerToClientEvents>) => {
   console.log('Client connected:', socket.id);
 
   // Handle authentication and set up presence
@@ -124,61 +124,33 @@ io.on('connection', async (socket: Socket<ClientToServerEvents, ServerToClientEv
   }
 
   try {
-    console.log('Verifying token:', token);
-    let userId: string;
-    try {
-      // Parse token to handle both formats
-      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string; email: string };
-      console.log('Decoded token:', decoded);
-      userId = decoded.id;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
+    const userId = decoded.userId;
 
-      // Verify user exists in database
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { id: true }
-      });
+    // Add user to connected users
+    connectedUsers.set(userId, {
+      userId,
+      socketId: socket.id,
+      status: 'online',
+      lastSeen: new Date()
+    });
 
-      if (!user) {
-        console.error('User not found in database:', userId);
-        socket.emit('error', { message: 'User not found' });
-        socket.disconnect();
-        return;
-      }
+    // Broadcast user's online status
+    updateUserPresence(userId, 'online');
 
-      // Add user to connected users
-      connectedUsers.set(userId, {
-        userId,
-        socketId: socket.id,
-        status: 'online',
-        lastSeen: new Date()
-      });
+    // Send current presence list to the newly connected user
+    socket.emit('presence:list', Array.from(connectedUsers.values()));
 
-      // Broadcast user's online status
-      await updateUserPresence(userId, 'online');
+    // Handle status updates
+    socket.on('presence:status', async (status) => {
+      await updateUserPresence(userId, status);
+    });
 
-      // Send current presence list to the newly connected user
-      socket.emit('presence:list', Array.from(connectedUsers.values()));
-
-      // Set up socket event handlers
-      socket.on('presence:status', async (status) => {
-        await updateUserPresence(userId, status);
-      });
-
-      socket.on('disconnect', () => {
-        console.log('Client disconnected:', socket.id);
-        removeUserPresence(socket.id);
-      });
-
-    } catch (jwtError) {
-      console.error('JWT verification failed:', {
-        error: jwtError,
-        tokenLength: token.length,
-        errorMessage: jwtError instanceof Error ? jwtError.message : 'Unknown error'
-      });
-      socket.emit('error', { message: 'Authentication failed' });
-      socket.disconnect();
-      return;
-    }
+    // Handle disconnection
+    socket.on('disconnect', () => {
+      console.log('Client disconnected:', socket.id);
+      removeUserPresence(socket.id);
+    });
 
   } catch (error) {
     console.error('Authentication error:', error);

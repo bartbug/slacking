@@ -52,15 +52,16 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
   useEffect(() => {
     const token = Cookies.get('token');
+    console.log('Socket init - token exists:', !!token);
     if (!token) return;
 
     const socketInstance = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000', {
-      withCredentials: true,
+      autoConnect: false,
       auth: { token }
     });
 
     socketInstance.on('connect', () => {
-      console.log('Socket connected');
+      console.log('Socket connected with ID:', socketInstance.id);
       setIsConnected(true);
     });
 
@@ -74,8 +75,9 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       console.error('Socket error:', error);
     });
 
-    // Handle presence events
+    // Handle presence events with logging
     socketInstance.on('presence:update', (update: PresenceUpdate) => {
+      console.log('Received presence update:', update);
       if (update.status === 'offline') {
         removeOnlineUser(update.userId);
       } else {
@@ -88,6 +90,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     });
 
     socketInstance.on('presence:list', (users: PresenceUpdate[]) => {
+      console.log('Received presence list:', users);
       setOnlineUsers(users.map((user: PresenceUpdate) => ({
         id: user.userId,
         status: user.status,
@@ -104,7 +107,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
   const joinChannel = (channelId: string) => {
     if (socket) {
-      socket.emit('join-channel', channelId);
+      socket.emit('join-channel', { channelId });
     }
   };
 

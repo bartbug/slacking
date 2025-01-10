@@ -1,12 +1,6 @@
 import { create } from 'zustand';
 import { StateCreator } from 'zustand';
-
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  status?: 'online' | 'offline' | 'away';
-}
+import { User } from '../types';
 
 type State = {
   onlineUsers: User[];
@@ -27,13 +21,24 @@ export const useUserStore = create<UserStore>((set) => ({
   onlineUsers: [],
   userTyping: {},
 
-  setOnlineUsers: (users) => set({ onlineUsers: users }),
-  addOnlineUser: (user) => set((state) => ({
-    onlineUsers: [...state.onlineUsers, user]
-  })),
-  removeOnlineUser: (userId) => set((state) => ({
-    onlineUsers: state.onlineUsers.filter(u => u.id !== userId)
-  })),
+  setOnlineUsers: (users) => {
+    console.log('Setting online users:', users);
+    set({ onlineUsers: users });
+  },
+  
+  addOnlineUser: (user) => {
+    console.log('Adding online user:', user);
+    set((state) => ({
+      onlineUsers: [...state.onlineUsers, user]
+    }));
+  },
+  
+  removeOnlineUser: (userId) => {
+    console.log('Removing user:', userId);
+    set((state) => ({
+      onlineUsers: state.onlineUsers.filter(u => u.id !== userId)
+    }));
+  },
   
   setUserTyping: (channelId, userId) => set((state) => ({
     userTyping: {
