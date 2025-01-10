@@ -13,7 +13,8 @@ model User {
   name          String
   passwordHash  String
   avatar        String?
-  status        String?   @default("active")
+  status        String?   @default("offline")
+  lastSeen      DateTime  @default(now())
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -23,6 +24,7 @@ model User {
   receivedMessages DirectMessage[] @relation("Receiver")
   channels      ChannelMember[]
   createdChannels Channel[] @relation("Creator")
+  reactions     MessageReaction[]
 }
 
 model Channel {
@@ -70,8 +72,24 @@ model Message {
   channel   Channel   @relation(fields: [channelId], references: [id])
   parent    Message?  @relation("ThreadReplies", fields: [parentId], references: [id])
   replies   Message[] @relation("ThreadReplies")
+  reactions MessageReaction[]
 
   @@index([parentId])  // Index for faster thread queries
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  emoji     String
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  // Relationships
+  message   Message  @relation(fields: [messageId], references: [id])
+  user      User    @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId, emoji])  // One user can only react once with each emoji
+  @@index([messageId])  // Index for faster reaction queries
 }
 
 model DirectMessage {

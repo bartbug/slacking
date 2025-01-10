@@ -2,7 +2,16 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Message, DirectMessage } from './types';
+import { Message, DirectMessage, User } from './types';
+import { useUserStore } from './stores/userStore';
+import Cookies from 'js-cookie';
+
+// Add interface for presence update
+interface PresenceUpdate {
+  userId: string;
+  status: 'online' | 'away' | 'offline';
+  lastSeen: Date;
+}
 
 interface SocketContextType {
   socket: Socket | null;
@@ -14,6 +23,7 @@ interface SocketContextType {
   sendDirectMessage: (content: string, senderId: string, receiverId: string) => void;
   addReaction: (messageId: string, emoji: string, userId: string) => void;
   removeReaction: (messageId: string, emoji: string, userId: string) => void;
+  setStatus: (status: 'online' | 'away' | 'offline') => void;
 }
 
 const SocketContext = createContext<SocketContextType>({
@@ -26,6 +36,7 @@ const SocketContext = createContext<SocketContextType>({
   sendDirectMessage: () => {},
   addReaction: () => {},
   removeReaction: () => {},
+  setStatus: () => {},
 });
 
 export const useSocket = () => useContext(SocketContext);
@@ -37,10 +48,15 @@ interface SocketProviderProps {
 export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const { setOnlineUsers, addOnlineUser, removeOnlineUser } = useUserStore();
 
   useEffect(() => {
+    const token = Cookies.get('token');
+    if (!token) return;
+
     const socketInstance = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000', {
       withCredentials: true,
+      auth: { token }
     });
 
     socketInstance.on('connect', () => {
@@ -51,10 +67,32 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     socketInstance.on('disconnect', () => {
       console.log('Socket disconnected');
       setIsConnected(false);
+      setOnlineUsers([]); // Clear online users on disconnect
     });
 
     socketInstance.on('error', (error) => {
       console.error('Socket error:', error);
+    });
+
+    // Handle presence events
+    socketInstance.on('presence:update', (update: PresenceUpdate) => {
+      if (update.status === 'offline') {
+        removeOnlineUser(update.userId);
+      } else {
+        addOnlineUser({
+          id: update.userId,
+          status: update.status,
+          lastSeen: update.lastSeen
+        } as User);
+      }
+    });
+
+    socketInstance.on('presence:list', (users: PresenceUpdate[]) => {
+      setOnlineUsers(users.map((user: PresenceUpdate) => ({
+        id: user.userId,
+        status: user.status,
+        lastSeen: user.lastSeen
+      } as User)));
     });
 
     setSocket(socketInstance);
@@ -62,7 +100,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     return () => {
       socketInstance.disconnect();
     };
-  }, []);
+  }, [setOnlineUsers, addOnlineUser, removeOnlineUser]);
 
   const joinChannel = (channelId: string) => {
     if (socket) {
@@ -96,13 +134,21 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
   const addReaction = (messageId: string, emoji: string, userId: string) => {
     if (socket) {
+      console.log('Emitting add-reaction:', { messageId, emoji, userId });
       socket.emit('add-reaction', { messageId, emoji, userId });
     }
   };
 
   const removeReaction = (messageId: string, emoji: string, userId: string) => {
     if (socket) {
+      console.log('Emitting remove-reaction:', { messageId, emoji, userId });
       socket.emit('remove-reaction', { messageId, emoji, userId });
+    }
+  };
+
+  const setStatus = (status: 'online' | 'away' | 'offline') => {
+    if (socket) {
+      socket.emit('presence:status', status);
     }
   };
 
@@ -118,6 +164,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
         sendDirectMessage,
         addReaction,
         removeReaction,
+        setStatus,
       }}
     >
       {children}
@@ -126,23 +173,38 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 };
 
 // Custom hooks for specific socket functionalities
-export const useChannelMessages = (channelId: string) => {
-  const { socket } = useSocket();
+export const useChannelMessages = (channelId: string): { 
+  messages: Message[]; 
+  isLoading: boolean; 
+  error: string | null; 
+  hasMore: boolean; 
+  isLoadingMore: boolean;
+  loadMore: () => Promise<void>;
+} => {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const { socket } = useSocket();
 
   useEffect(() => {
     if (!socket) return;
 
     // Join the channel
-    socket.emit('join-channel', channelId);
+    socket.emit('join-channel', { channelId });
 
     // Handle initial messages
-    socket.on('channel-messages', (initialMessages: Message[]) => {
-      const messagesWithReactions = initialMessages.map(msg => ({
+    socket.on('channel-messages', (response: { messages: Message[]; nextCursor: string | null; hasMore: boolean }) => {
+      const messagesWithReactions = response.messages.map((msg: Message) => ({
         ...msg,
         reactions: msg.reactions || []
       }));
-      setMessages(sortMessagesByDate(messagesWithReactions));
+      setMessages(messagesWithReactions);
+      setNextCursor(response.nextCursor);
+      setHasMore(response.hasMore);
+      setIsLoading(false);
     });
 
     // Listen for new messages
@@ -152,24 +214,29 @@ export const useChannelMessages = (channelId: string) => {
           ...message,
           reactions: message.reactions || []
         };
-        setMessages(prev => sortMessagesByDate([...prev, messageWithReactions]));
+        setMessages(prev => [...prev, messageWithReactions]);
       }
     };
 
     // Listen for reaction updates
     const handleReactionUpdate = (updatedMessage: Message) => {
+      console.log('Handling reaction update:', JSON.stringify(updatedMessage, null, 2));
       if (updatedMessage.channelId === channelId) {
-        const messageWithReactions = {
-          ...updatedMessage,
-          reactions: updatedMessage.reactions || []
-        };
-        setMessages(prev => 
-          sortMessagesByDate(
-            prev.map(msg => 
-              msg.id === updatedMessage.id ? messageWithReactions : msg
-            )
-          )
-        );
+        setMessages(prevMessages => {
+          // Find the message and update its reactions
+          const messageIndex = prevMessages.findIndex(msg => msg.id === updatedMessage.id);
+          if (messageIndex === -1) return prevMessages;
+
+          // Create a new array with the updated message
+          const newMessages = [...prevMessages];
+          newMessages[messageIndex] = {
+            ...updatedMessage,
+            reactions: updatedMessage.reactions || []
+          };
+          
+          console.log('Updated message reactions:', newMessages[messageIndex].reactions);
+          return newMessages;
+        });
       }
     };
 
@@ -185,7 +252,30 @@ export const useChannelMessages = (channelId: string) => {
     };
   }, [socket, channelId]);
 
-  return messages;
+  const loadMore = async () => {
+    if (!socket || !nextCursor) return;
+
+    setIsLoadingMore(true);
+
+    try {
+      socket.emit('load-more-messages', { channelId, cursor: nextCursor });
+      // Response will be handled by the channel-messages event listener
+    } catch (err) {
+      console.error('Error loading more messages:', err);
+      setError('Error loading more messages');
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  return { 
+    messages, 
+    isLoading, 
+    error, 
+    hasMore, 
+    isLoadingMore, 
+    loadMore 
+  };
 };
 
 // Helper function to sort messages by date

@@ -2,6 +2,8 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  status?: 'online' | 'away' | 'offline';
+  lastSeen?: Date;
 }
 
 export interface Channel {
@@ -12,8 +14,12 @@ export interface Channel {
 }
 
 export interface MessageReaction {
+  id: string;
   emoji: string;
-  users: User[];
+  messageId: string;
+  userId: string;
+  user: User;
+  createdAt: string;
 }
 
 export interface Message {

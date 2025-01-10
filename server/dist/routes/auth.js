@@ -22,7 +22,11 @@ const JWT_SECRET = process.env.JWT_SECRET;
 // Validation schemas
 const registerSchema = zod_1.z.object({
     email: zod_1.z.string().email(),
-    password: zod_1.z.string().min(6),
+    password: zod_1.z.string()
+        .min(8)
+        .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+        .regex(/[0-9]/, 'Password must contain at least one number')
+        .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character'),
     name: zod_1.z.string().min(2)
 });
 const loginSchema = zod_1.z.object({
@@ -61,8 +65,11 @@ router.post('/register', async (req, res) => {
     }
     catch (error) {
         if (error instanceof zod_1.z.ZodError) {
-            return res.status(400).json({ error: error.errors });
+            // Format validation errors into a readable message
+            const errorMessages = error.errors.map(err => err.message).join(', ');
+            return res.status(400).json({ error: errorMessages });
         }
+        console.error('Registration error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -95,8 +102,11 @@ router.post('/login', async (req, res) => {
     }
     catch (error) {
         if (error instanceof zod_1.z.ZodError) {
-            return res.status(400).json({ error: error.errors });
+            // Format validation errors into a readable message
+            const errorMessages = error.errors.map(err => err.message).join(', ');
+            return res.status(400).json({ error: errorMessages });
         }
+        console.error('Login error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });

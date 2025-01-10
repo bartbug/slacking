@@ -1,10 +1,21 @@
-import express from 'express';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import cors from 'cors';
 import dotenv from 'dotenv';
-import { PrismaClient } from '@prisma/client';
+
+// Load environment variables first
+dotenv.config();
+
+// Validate required env vars
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be defined in environment');
+}
+
+import express, { Request, Response, NextFunction } from 'express';
+import { createServer } from 'http';
+import { Server, Socket } from 'socket.io';
+import cors from 'cors';
+import { PrismaClient, Prisma } from '@prisma/client';
 import rateLimit from 'express-rate-limit';
+import { ServerToClientEvents, ClientToServerEvents } from './types/socket';
+import jwt from 'jsonwebtoken';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -12,12 +23,54 @@ import channelRoutes from './routes/channels';
 import messageRoutes from './routes/messages';
 import threadRoutes from './routes/threads';
 
-// Load environment variables
-dotenv.config();
-
 const app = express();
 const httpServer = createServer(app);
 const prisma = new PrismaClient();
+
+// Track connected users and their socket IDs
+interface ConnectedUser {
+  userId: string;
+  socketId: string;
+  status: 'online' | 'away' | 'offline';
+  lastSeen: Date;
+}
+
+const connectedUsers = new Map<string, ConnectedUser>();
+
+// Helper functions for presence
+const updateUserPresence = async (userId: string, status: 'online' | 'away' | 'offline') => {
+  const user = connectedUsers.get(userId);
+  if (user) {
+    user.status = status;
+    user.lastSeen = new Date();
+    connectedUsers.set(userId, user);
+    
+    // Broadcast presence update to all connected clients
+    io.emit('presence:update', {
+      userId,
+      status,
+      lastSeen: user.lastSeen
+    });
+  }
+};
+
+const removeUserPresence = (socketId: string) => {
+  for (const [userId, user] of connectedUsers.entries()) {
+    if (user.socketId === socketId) {
+      user.status = 'offline';
+      user.lastSeen = new Date();
+      connectedUsers.set(userId, user);
+      
+      // Broadcast offline status
+      io.emit('presence:update', {
+        userId,
+        status: 'offline',
+        lastSeen: user.lastSeen
+      });
+      break;
+    }
+  }
+};
 
 // Updated CORS configuration
 const allowedOrigins = [
@@ -25,7 +78,7 @@ const allowedOrigins = [
   'http://localhost:8000'
 ];
 
-const io = new Server(httpServer, {
+const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
     origin: allowedOrigins,
     methods: ['GET', 'POST'],
@@ -54,17 +107,89 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/threads', threadRoutes);
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok' });
 });
 
 // Socket.IO connection handling
-io.on('connection', (socket) => {
+io.on('connection', async (socket: Socket<ClientToServerEvents, ServerToClientEvents>) => {
   console.log('Client connected:', socket.id);
 
+  // Handle authentication and set up presence
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    socket.emit('error', { message: 'Authentication required' });
+    socket.disconnect();
+    return;
+  }
+
+  try {
+    console.log('Verifying token:', token);
+    let userId: string;
+    try {
+      // Parse token to handle both formats
+      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string; email: string };
+      console.log('Decoded token:', decoded);
+      userId = decoded.id;
+
+      // Verify user exists in database
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true }
+      });
+
+      if (!user) {
+        console.error('User not found in database:', userId);
+        socket.emit('error', { message: 'User not found' });
+        socket.disconnect();
+        return;
+      }
+
+      // Add user to connected users
+      connectedUsers.set(userId, {
+        userId,
+        socketId: socket.id,
+        status: 'online',
+        lastSeen: new Date()
+      });
+
+      // Broadcast user's online status
+      await updateUserPresence(userId, 'online');
+
+      // Send current presence list to the newly connected user
+      socket.emit('presence:list', Array.from(connectedUsers.values()));
+
+      // Set up socket event handlers
+      socket.on('presence:status', async (status) => {
+        await updateUserPresence(userId, status);
+      });
+
+      socket.on('disconnect', () => {
+        console.log('Client disconnected:', socket.id);
+        removeUserPresence(socket.id);
+      });
+
+    } catch (jwtError) {
+      console.error('JWT verification failed:', {
+        error: jwtError,
+        tokenLength: token.length,
+        errorMessage: jwtError instanceof Error ? jwtError.message : 'Unknown error'
+      });
+      socket.emit('error', { message: 'Authentication failed' });
+      socket.disconnect();
+      return;
+    }
+
+  } catch (error) {
+    console.error('Authentication error:', error);
+    socket.emit('error', { message: 'Authentication failed' });
+    socket.disconnect();
+    return;
+  }
+
   // Join a channel room
-  socket.on('join-channel', async (channelId: string) => {
-    console.log(`Socket ${socket.id} joining channel ${channelId}`);
+  socket.on('join-channel', async ({ channelId, cursor, limit = 50 }: { channelId: string; cursor?: string; limit?: number }) => {
+    console.log(`Socket ${socket.id} joining channel ${channelId}, cursor: ${cursor}, limit: ${limit}`);
     socket.join(`channel:${channelId}`);
 
     // Send existing messages to the client
@@ -72,26 +197,58 @@ io.on('connection', (socket) => {
       const messages = await prisma.message.findMany({
         where: {
           channelId,
-          parentId: null // Only get top-level messages
+          parentId: null,
+          ...(cursor && {
+            createdAt: {
+              lt: new Date(cursor)
+            }
+          })
         },
         include: {
           user: {
             select: {
               id: true,
               name: true,
-              email: true
+              email: true,
+              status: true,
+              lastSeen: true
             }
+          },
+          reactions: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  status: true,
+                  lastSeen: true
+                }
+              }
+            }
+          },
+          _count: {
+            select: { replies: true }
           }
         },
         orderBy: {
-          createdAt: 'asc'
+          createdAt: 'desc'
         },
-        take: 50 // Limit to last 50 messages
+        take: limit + 1
       });
       
-      socket.emit('channel-messages', messages);
+      const hasMore = messages.length > limit;
+      const paginatedMessages = hasMore ? messages.slice(0, limit) : messages;
+      const nextCursor = hasMore ? messages[limit - 1].createdAt.toISOString() : null;
+
+      socket.emit('channel-messages', {
+        messages: paginatedMessages.reverse(), // Reverse to show oldest first
+        nextCursor,
+        hasMore
+      });
     } catch (error) {
       console.error('Error fetching messages:', error);
+      socket.emit('error', { message: 'Failed to fetch messages' });
     }
   });
 
@@ -121,7 +278,9 @@ io.on('connection', (socket) => {
             select: {
               id: true,
               name: true,
-              email: true
+              email: true,
+              status: true,
+              lastSeen: true
             }
           }
         }
@@ -211,6 +370,144 @@ io.on('connection', (socket) => {
     socket.leave(`thread:${threadId}`);
   });
 
+  // Handle reactions
+  socket.on('add-reaction', async ({ messageId, emoji, userId }: { messageId: string; emoji: string; userId: string }) => {
+    try {
+      // Get the message and check for any existing reactions from this user
+      const message = await prisma.message.findUnique({
+        where: { id: messageId },
+        select: { 
+          channelId: true,
+          reactions: {
+            where: {
+              userId: userId  // Check for any reaction from this user
+            }
+          }
+        }
+      });
+
+      if (!message) {
+        socket.emit('error', { message: 'Message not found' });
+        return;
+      }
+
+      // If user has any existing reaction, remove it first
+      if (message.reactions.length > 0) {
+        await prisma.messageReaction.deleteMany({
+          where: {
+            messageId,
+            userId
+          }
+        });
+        console.log(`Removed existing reaction from user ${userId} on message ${messageId}`);
+      }
+
+      // Add the new reaction
+      await prisma.messageReaction.create({
+        data: {
+          emoji,
+          messageId,
+          userId
+        }
+      });
+      console.log(`Added new reaction ${emoji} by user ${userId} to message ${messageId}`);
+
+      // Get updated message with reactions
+      const updatedMessage = await prisma.message.findUnique({
+        where: { id: messageId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          },
+          reactions: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true
+                }
+              }
+            }
+          }
+        }
+      });
+
+      if (!updatedMessage) {
+        socket.emit('error', { message: 'Failed to fetch updated message' });
+        return;
+      }
+
+      // Emit to channel
+      io.to(`channel:${message.channelId}`).emit('reaction-updated', updatedMessage);
+    } catch (error) {
+      console.error('Error handling reaction:', error);
+      socket.emit('error', { message: 'Failed to handle reaction' });
+    }
+  });
+
+  socket.on('remove-reaction', async ({ messageId, emoji, userId }: { messageId: string; emoji: string; userId: string }) => {
+    try {
+      // Get the message to verify it exists and get channelId
+      const message = await prisma.message.findUnique({
+        where: { id: messageId },
+        select: { channelId: true }
+      });
+
+      if (!message) {
+        socket.emit('error', { message: 'Message not found' });
+        return;
+      }
+
+      // Remove reaction
+      await prisma.messageReaction.deleteMany({
+        where: {
+          messageId,
+          emoji,
+          userId
+        }
+      });
+      console.log(`Reaction removed: ${emoji} by user ${userId} from message ${messageId}`);
+
+      // Get updated message with reactions
+      const updatedMessage = await prisma.message.findUnique({
+        where: { id: messageId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          },
+          reactions: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true
+                }
+              }
+            }
+          }
+        }
+      });
+
+      // Emit to channel
+      if (updatedMessage) {
+        io.to(`channel:${message.channelId}`).emit('reaction-updated', updatedMessage);
+      }
+    } catch (error) {
+      console.error('Error removing reaction:', error);
+      socket.emit('error', { message: 'Failed to remove reaction' });
+    }
+  });
+
   // Handle new thread message
   socket.on('thread:message', async (message: { 
     content: string; 
@@ -243,7 +540,7 @@ io.on('connection', (socket) => {
       }
 
       // Create the reply and update parent in a transaction
-      const [reply] = await prisma.$transaction(async (tx) => {
+      const [reply] = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         console.log('Creating reply message...');
         // Create the reply
         const newReply = await tx.message.create({
@@ -310,8 +607,50 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+  // Load more messages
+  socket.on('load-more-messages', async ({ channelId, cursor, limit = 50 }: { channelId: string; cursor: string; limit?: number }) => {
+    console.log(`Socket ${socket.id} loading more messages for channel ${channelId}, cursor: ${cursor}, limit: ${limit}`);
+
+    try {
+      const messages = await prisma.message.findMany({
+        where: {
+          channelId,
+          parentId: null,
+          createdAt: {
+            lt: new Date(cursor)
+          }
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          },
+          _count: {
+            select: { replies: true }
+          }
+        },
+        orderBy: {
+          createdAt: 'desc'
+        },
+        take: limit + 1
+      });
+
+      const hasMore = messages.length > limit;
+      const paginatedMessages = hasMore ? messages.slice(0, limit) : messages;
+      const nextCursor = hasMore ? messages[limit - 1].createdAt.toISOString() : null;
+
+      socket.emit('more-messages', {
+        messages: paginatedMessages.reverse(),
+        nextCursor,
+        hasMore
+      });
+    } catch (error) {
+      console.error('Error loading more messages:', error);
+      socket.emit('error', { message: 'Failed to load more messages' });
+    }
   });
 });
 

@@ -1,7 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { TokenService } from './services/token';
+import { useRouter, usePathname } from 'next/navigation';
+import Cookies from 'js-cookie';
 
 interface User {
   id: string;
@@ -11,60 +12,50 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  isLoading: boolean;
-  login: (email: string, password: string) => Promise<User>;
-  register: (email: string, password: string, name: string) => Promise<User>;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
+  isLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  isLoading: true,
-  login: async () => {
-    throw new Error('Not implemented');
-  },
-  register: async () => {
-    throw new Error('Not implemented');
-  },
+  login: async () => {},
+  register: async () => {},
   logout: () => {},
+  isLoading: true,
 });
-
-export const useAuth = () => useContext(AuthContext);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const router = useRouter();
+  const pathname = usePathname();
 
-  // Handle token expiration
-  useEffect(() => {
-    const handleTokenExpired = () => {
-      setUser(null);
-    };
-    window.addEventListener('token-expired', handleTokenExpired);
-    return () => window.removeEventListener('token-expired', handleTokenExpired);
-  }, []);
-
-  // Validate token on mount
   useEffect(() => {
     const validateToken = async () => {
-      const token = TokenService.get();
-      if (!token || !TokenService.isValid(token)) {
-        TokenService.remove();
-        setIsLoading(false);
-        return;
-      }
-
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/validate`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const token = Cookies.get('token');
+        if (!token) {
+          setIsLoading(false);
+          return;
+        }
+
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/validate`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         });
-        
-        if (!res.ok) throw new Error('Invalid token');
-        
-        const data = await res.json();
-        setUser(data.user);
-      } catch {
-        TokenService.remove();
+
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data.user);
+        } else {
+          Cookies.remove('token');
+        }
+      } catch (error) {
+        console.error('Token validation error:', error);
+        Cookies.remove('token');
       } finally {
         setIsLoading(false);
       }
@@ -73,50 +64,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     validateToken();
   }, []);
 
-  const login = async (email: string, password: string): Promise<User> => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
+  const login = async (email: string, password: string) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
 
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || 'Failed to login');
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Login failed');
+      }
+
+      const data = await response.json();
+      Cookies.set('token', data.token, { expires: 1 }); // Expires in 1 day
+      setUser(data.user);
+      router.push('/channels');
+    } catch (error) {
+      console.error('Login error:', error);
+      throw error;
     }
-
-    const data = await res.json();
-    TokenService.set(data.token);
-    setUser(data.user);
-    return data.user;
   };
 
-  const register = async (email: string, password: string, name: string): Promise<User> => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name }),
-    });
+  const register = async (email: string, password: string, name: string) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password, name }),
+      });
 
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || 'Failed to register');
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Registration failed');
+      }
+
+      const data = await response.json();
+      Cookies.set('token', data.token, { expires: 1 }); // Expires in 1 day
+      setUser(data.user);
+      router.push('/channels');
+    } catch (error) {
+      console.error('Registration error:', error);
+      throw error;
     }
-
-    const data = await res.json();
-    TokenService.set(data.token);
-    setUser(data.user);
-    return data.user;
   };
 
   const logout = () => {
-    TokenService.remove();
+    Cookies.remove('token');
     setUser(null);
+    router.push('/login');
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, login, register, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );
-} 
+}
+
+export const useAuth = () => useContext(AuthContext); 

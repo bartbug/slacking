@@ -19,7 +19,7 @@ const prisma = new PrismaClient();
 // Add JWT expiration if not in env
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 
-// Validate required env vars early
+// Ensure JWT_SECRET is set
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be defined in environment');
 }
